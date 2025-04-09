@@ -98,9 +98,29 @@ class RoughVolatility:
     def estimate_H(self, logrets):
         return hurst_exponent_DFA(logrets)
 
-    def estimate_eta(self, logrets, H):
-        stdev = math.sqrt(variance(logrets))
-        return stdev * 2.0
+    def estimate_eta(self, logrets, H, window=20):
+        import numpy as np
+        import math
+
+        if len(logrets) < window:
+            stdev = math.sqrt(np.var(logrets, ddof=1))
+            return stdev * 2.0
+
+        realized_var = []
+        for i in range(window - 1, len(logrets)):
+            window_returns = logrets[i - window + 1:i + 1]
+            rv = np.mean(np.square(window_returns))
+            realized_var.append(rv)
+        realized_var = np.array(realized_var)
+        
+        log_rv = np.log(realized_var)
+        log_diff = np.diff(log_rv)
+        
+        daily_eta = np.std(log_diff, ddof=1)
+        
+        annual_eta = daily_eta * np.sqrt(252)
+        return annual_eta
+
 
     def estimate_rho(self, logrets):
         logrets = np.array(logrets, dtype=np.float64)
@@ -231,7 +251,7 @@ def main():
 
     # Set simulation parameters.
     forward_steps = 100   # number of time steps forward
-    path_num = 50         # number of simulated paths
+    path_num = 500         # number of simulated paths
 
     rv = RoughVolatility()
     paths = rv.generate_stock_price_paths(prices, forward_steps, path_num)
