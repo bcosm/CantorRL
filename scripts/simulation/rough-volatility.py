@@ -233,8 +233,8 @@ class RoughVolatility:
 
 def main():
     # Input CSV file name (should be in the same folder).
-    input_filename = "historical_prices.csv"
-    output_filename = "price_paths.csv"
+    input_filename = "scripts/simulation/historical_prices.csv"
+    output_filename = "scripts/simulation/price_paths.csv"
 
     try:
         # Try reading the CSV assuming a single column (with or without header).
@@ -250,7 +250,7 @@ def main():
         sys.exit(1)
 
     # Set simulation parameters.
-    forward_steps = 100   # number of time steps forward
+    forward_steps = 252   # number of time steps forward
     path_num = 500         # number of simulated paths
 
     rv = RoughVolatility()
