@@ -112,7 +112,7 @@ class HedgingEnv(gym.Env):
         lagged_S_return = np.clip(lagged_S_return, -1.0, 1.0)
         lagged_v_change = np.clip(lagged_v_change, -1.0, 1.0)
 
-
+        # Normalize the observation
         obs = np.array([
             norm_S_t, norm_C_t, norm_P_t,
             norm_call_held, norm_put_held,
