@@ -389,7 +389,7 @@ def generate_paths_and_options(historical_prices_np_main, num_paths_main, r_main
 
     if loaded_seed_used_for_run is not None: 
         seed_everything(loaded_seed_used_for_run)
-
+    
 
     time_grid_main_gpu = cp.linspace(0, N_STEPS * dt_main, N_STEPS + 1, dtype=cp.float64)
     lam_main_gpu_batch = rbergomi_lambda_gpu(time_grid_main_gpu, H_arr_gpu)
