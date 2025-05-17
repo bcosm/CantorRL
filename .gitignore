@@ -175,3 +175,4 @@ cython_debug/
 .ipynb_checkpoints/
 rbergomi_generator_checkpoint.npz
 data/paths_rbergomi_options.npz
+data/paths_rbergomi_options_100k.npz
