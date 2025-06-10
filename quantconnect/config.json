@@ -1,0 +1,34 @@
+{
+    "description": "CantorRL Hedging Strategy - Reinforcement Learning based dynamic hedging using PPO",
+    "parameters": {
+        "start_date": "2023-01-01",
+        "end_date": "2024-01-01",
+        "initial_cash": 1000000,
+        "shares_to_hedge": 10000,
+        "max_contracts_per_type": 200,
+        "max_trade_per_step": 15,
+        "transaction_cost_per_contract": 0.05,
+        "rebalance_frequency_minutes": 60
+    },
+    "assets": {
+        "underlying": "SPY",
+        "options": "SPY Options"
+    },
+    "libraries": [
+        "torch",
+        "numpy", 
+        "scipy",
+        "pickle",
+        "joblib"
+    ],
+    "files": [
+        "main.py",
+        "model_wrapper.py", 
+        "option_calculator.py"
+    ],
+    "object_store_files": [
+        "policy_weights.pth",
+        "normalization_stats.pkl",
+        "architecture_info.pkl"
+    ]
+}
