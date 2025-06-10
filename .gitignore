@@ -175,6 +175,8 @@ cython_debug/
 .ipynb_checkpoints/
 rbergomi_generator_checkpoint.npz
 data/
-src/results/
-src/eval_artifacts/
+src/results/eval_artifacts/
+src/results/logs/
+src/results/optuna_dbs/
+src/results/models/
 
