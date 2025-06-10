@@ -28,9 +28,14 @@ class RLHedgingAlgorithm(QCAlgorithm):
         option = self.AddOption("SPY", Resolution.Minute)
         option.SetFilter(self.OptionFilter)
         
+        # Set warmup period to ensure all securities have data before trading
+        self.SetWarmup(timedelta(days=5))  # 5 days of warmup data
+        
         # Initialize our RL model
         self.model_wrapper = ModelWrapper(self)
-        self.option_calculator = OptionCalculator()        # Environment state tracking - CONSERVATIVE SIZING FOR TESTING
+        self.option_calculator = OptionCalculator()
+        
+        # Environment state tracking - CONSERVATIVE SIZING FOR TESTING
         self.shares_to_hedge = 1000   # Reduced from 10000 to avoid margin issues
         self.current_call_contracts = 0
         self.current_put_contracts = 0
@@ -44,6 +49,10 @@ class RLHedgingAlgorithm(QCAlgorithm):
         self.last_vol = None
         self.price_history = []
         self.vol_history = []
+        
+        # Add data validation tracking
+        self.warmup_complete = False
+        self.available_options = {}  # Track available option symbols with valid data
         
         # Schedule rebalancing every hour during market hours
         self.Schedule.On(
@@ -60,8 +69,17 @@ class RLHedgingAlgorithm(QCAlgorithm):
                 .Strikes(-2, 2)  # Near the money strikes
                 .Expiration(timedelta(20), timedelta(45))  # 20-45 days to expiry
                 .OnlyApplyFilterAtMarketOpen())
-      def OnData(self, data):
+    
+    def OnData(self, data):
         """Main data handler - updates price and volatility tracking"""
+        # Skip processing during warmup period
+        if self.IsWarmingUp:
+            return
+            
+        if not self.warmup_complete:
+            self.warmup_complete = True
+            self.Log("Warmup period complete - starting trading")
+        
         if not self.spy.Symbol in data.Bars:
             return
             
@@ -73,6 +91,9 @@ class RLHedgingAlgorithm(QCAlgorithm):
                 
             self.last_price = current_price
         
+        # Update available options with valid data
+        self.UpdateAvailableOptions(data)
+        
         # Calculate implied volatility from options if available
         if data.OptionChains.Count > 0:
             for chain in data.OptionChains.Values:
@@ -83,6 +104,25 @@ class RLHedgingAlgorithm(QCAlgorithm):
             self.price_history = self.price_history[-50:]
         if len(self.vol_history) > 100:
             self.vol_history = self.vol_history[-50:]
+    def UpdateAvailableOptions(self, data):
+        """Track which options have valid pricing data"""
+        self.available_options.clear()
+        
+        if data.OptionChains.Count > 0:
+            for chain in data.OptionChains.Values:
+                for contract in chain:
+                    # Check if option has valid pricing data and is reasonably liquid
+                    if (contract.LastPrice > 0 or 
+                        (contract.BidPrice > 0 and contract.AskPrice > 0 and 
+                         contract.AskPrice > contract.BidPrice)):
+                        # Additional filter for reasonable strikes and DTE
+                        if self.last_price is not None:
+                            strike_diff_pct = abs(contract.Strike - self.last_price) / self.last_price
+                            time_to_expiry = (contract.Expiry.date() - self.Time.date()).days
+                            
+                            # Only include options within 5% of current price and 7-60 days to expiry
+                            if strike_diff_pct <= 0.05 and 7 <= time_to_expiry <= 60:
+                                self.available_options[contract.Symbol] = contract
     
     def UpdateImpliedVolatility(self, chain, current_price):
         """Extract implied volatility from option chain"""
@@ -94,15 +134,25 @@ class RLHedgingAlgorithm(QCAlgorithm):
         
         if atm_options:
             # Use average implied volatility of ATM options
-            avg_iv = np.mean([opt.ImpliedVolatility for opt in atm_options if opt.ImpliedVolatility > 0])
-            if avg_iv > 0:
+            valid_ivs = [opt.ImpliedVolatility for opt in atm_options if opt.ImpliedVolatility > 0]
+            if valid_ivs:
+                avg_iv = np.mean(valid_ivs)
                 self.vol_history.append(avg_iv)
                 self.last_vol = avg_iv
       def Rebalance(self):
         """Main rebalancing logic using RL model predictions"""
+        # Don't trade during warmup
+        if self.IsWarmingUp:
+            return
+            
         # Check if we have valid price data
         if self.last_price is None:
             self.Log("No price data available yet, skipping rebalance")
+            return
+            
+        # Check if we have any available options
+        if not self.available_options:
+            self.Log("No options with valid pricing data available, skipping rebalance")
             return
             
         if not self.Portfolio[self.spy.Symbol].Invested:
@@ -121,17 +171,22 @@ class RLHedgingAlgorithm(QCAlgorithm):
         # Get RL model prediction
         actions = self.model_wrapper.predict(observation)
         if actions is None:
-            return
+            self.Log("Model prediction failed, using fallback action")
+            # Simple fallback: no action
+            actions = np.array([0.0, 0.0])
+            
+        self.Log(f"Model predicted actions: call={actions[0]:.3f}, put={actions[1]:.3f}")
             
         # Execute trades based on RL actions
         self.ExecuteOptionTrades(actions)
-    
-    def GetObservation(self) -> np.ndarray:
+      def GetObservation(self) -> np.ndarray:
         """Create observation vector matching training environment"""
         if self.last_price is None or self.last_vol is None:
+            self.Log("Missing price or volatility data for observation")
             return None
             
         if len(self.price_history) < 2 or len(self.vol_history) < 2:
+            self.Log(f"Insufficient history: prices={len(self.price_history)}, vol={len(self.vol_history)}")
             return None
         
         # Calculate features similar to training environment
@@ -153,7 +208,8 @@ class RLHedgingAlgorithm(QCAlgorithm):
         time_to_expiry = 30/252  # Assume 30 days
         moneyness_call = current_price / current_price  # ATM = 1.0
         moneyness_put = current_price / current_price   # ATM = 1.0
-          # Calculate Greeks for calls and puts
+        
+        # Calculate Greeks for calls and puts
         call_greeks = self.option_calculator.calculate_greeks(
             current_price, current_price, time_to_expiry, 0.04, current_vol, 'call'
         )
@@ -187,64 +243,92 @@ class RLHedgingAlgorithm(QCAlgorithm):
             portfolio_gamma / 10000.0   # Normalized
         ], dtype=np.float32)
         
-        return observation
-    
-    def ExecuteOptionTrades(self, actions: np.ndarray):
+        self.Log(f"Created observation: price={current_price:.2f}, vol={current_vol:.3f}, call_pos={call_position_normalized:.3f}, put_pos={put_position_normalized:.3f}")
+        
+        return observation    def ExecuteOptionTrades(self, actions: np.ndarray):
         """Execute option trades based on RL model actions"""
         if len(actions) != 2:
+            self.Log(f"Invalid action length: {len(actions)}")
             return
             
         # Scale actions to actual trade sizes
         call_trade = int(actions[0] * self.max_trade_per_step)
         put_trade = int(actions[1] * self.max_trade_per_step)
         
+        self.Log(f"Scaled trades: call={call_trade}, put={put_trade} (from actions {actions[0]:.3f}, {actions[1]:.3f})")
+        
         # Find ATM options to trade
-        call_symbol, put_symbol = self.FindATMOptions()
+        call_symbol, put_symbol = self.FindATMOptionsWithData()
         
         if call_symbol is None or put_symbol is None:
+            self.Log("No valid ATM options found with pricing data")
             return
+        
+        self.Log(f"Found options: call={call_symbol}, put={put_symbol}")
         
         # Execute call trades
         if call_trade != 0:
+            # Validate that we have current price data for the call option
+            if not self.Securities.ContainsKey(call_symbol) or not self.Securities[call_symbol].HasData:
+                self.Log(f"Call option {call_symbol} does not have valid data, skipping trade")
+                return
+                
             new_call_position = max(-self.max_contracts_per_type, 
                                    min(self.max_contracts_per_type, 
                                        self.current_call_contracts + call_trade))
             trade_quantity = new_call_position - self.current_call_contracts
             
             if trade_quantity != 0:
-                self.MarketOrder(call_symbol, trade_quantity)
-                self.current_call_contracts = new_call_position
-                
-                # Log transaction cost
-                cost = abs(trade_quantity) * self.transaction_cost_per_contract
-                self.Log(f"Call trade: {trade_quantity} contracts, cost: ${cost:.2f}")
+                try:
+                    self.Log(f"Attempting call trade: {trade_quantity} contracts")
+                    order_ticket = self.MarketOrder(call_symbol, trade_quantity)
+                    if order_ticket and order_ticket.OrderId > 0:
+                        self.current_call_contracts = new_call_position
+                        # Log transaction cost
+                        cost = abs(trade_quantity) * self.transaction_cost_per_contract
+                        self.Log(f"Call trade executed: {trade_quantity} contracts, cost: ${cost:.2f}")
+                    else:
+                        self.Log(f"Failed to place call order for {trade_quantity} contracts")
+                except Exception as e:
+                    self.Log(f"Error placing call order: {str(e)}")
         
         # Execute put trades  
         if put_trade != 0:
+            # Validate that we have current price data for the put option
+            if not self.Securities.ContainsKey(put_symbol) or not self.Securities[put_symbol].HasData:
+                self.Log(f"Put option {put_symbol} does not have valid data, skipping trade")
+                return
+                
             new_put_position = max(-self.max_contracts_per_type,
                                   min(self.max_contracts_per_type,
                                       self.current_put_contracts + put_trade))
             trade_quantity = new_put_position - self.current_put_contracts
             
             if trade_quantity != 0:
-                self.MarketOrder(put_symbol, trade_quantity)
-                self.current_put_contracts = new_put_position
-                
-                # Log transaction cost
-                cost = abs(trade_quantity) * self.transaction_cost_per_contract
-                self.Log(f"Put trade: {trade_quantity} contracts, cost: ${cost:.2f}")
-      def FindATMOptions(self) -> Tuple[Symbol, Symbol]:
-        """Find the most liquid ATM call and put options"""
-        if self.last_price is None:
+                try:
+                    self.Log(f"Attempting put trade: {trade_quantity} contracts")
+                    order_ticket = self.MarketOrder(put_symbol, trade_quantity)
+                    if order_ticket and order_ticket.OrderId > 0:
+                        self.current_put_contracts = new_put_position
+                        # Log transaction cost
+                        cost = abs(trade_quantity) * self.transaction_cost_per_contract
+                        self.Log(f"Put trade executed: {trade_quantity} contracts, cost: ${cost:.2f}")
+                    else:
+                        self.Log(f"Failed to place put order for {trade_quantity} contracts")
+                except Exception as e:
+                    self.Log(f"Error placing put order: {str(e)}")
+    def FindATMOptionsWithData(self):
+        """Find ATM call and put options that have valid pricing data"""
+        if self.last_price is None or not self.available_options:
             return None, None
             
         call_symbol = None
         put_symbol = None
         min_strike_diff = float('inf')
-          # Look through current option chain
-        for symbol in self.Securities.Keys:
+        
+        # Look through available options with valid data
+        for symbol, contract in self.available_options.items():
             if symbol.SecurityType == SecurityType.Option and symbol.Underlying == self.spy.Symbol:
-                # Access strike price through symbol.ID.StrikePrice, not security.Strike
                 strike_price = symbol.ID.StrikePrice
                 strike_diff = abs(strike_price - self.last_price)
                 

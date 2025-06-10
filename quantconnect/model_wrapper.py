@@ -65,6 +65,22 @@ class ModelWrapper:
         except Exception as e:
             self.algorithm.Log(f"Error loading model: {str(e)}")
             self.loaded = False
+            self._load_sb3_weights(policy_weights)
+            
+            # Set normalization parameters
+            self.obs_mean = norm_stats['obs_mean']
+            self.obs_var = norm_stats['obs_var']
+            
+            # Initialize hidden states for recurrent model
+            hidden_dim = arch_info['hidden_dim']
+            self.hidden_states = (torch.zeros(1, 1, hidden_dim), torch.zeros(1, 1, hidden_dim))
+            
+            self.loaded = True
+            self.algorithm.Log("RL Model loaded successfully from ObjectStore")
+            
+        except Exception as e:
+            self.algorithm.Log(f"Error loading model: {str(e)}")
+            self.loaded = False
     
     def _load_sb3_weights(self, state_dict):
         """Load SB3 RecurrentPPO weights into our custom model"""
@@ -168,7 +184,7 @@ class RecurrentPPOModel(torch.nn.Module):
         return actions, new_hidden_states
             # model_bytes = self.algorithm.ObjectStore.ReadBytes("final_model.zip")
             # vecnorm_bytes = self.algorithm.ObjectStore.ReadBytes("final_vecnormalize.pkl")
-            
+        
             self.algorithm.Log("Model loading simulated - replace with actual ObjectStore loading")
             
             # Placeholder for model structure - you'll need to adapt this based on your actual model
