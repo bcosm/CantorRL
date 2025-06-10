@@ -34,13 +34,12 @@ class RLHedgingAlgorithm(QCAlgorithm):
         # Initialize our RL model
         self.model_wrapper = ModelWrapper(self)
         self.option_calculator = OptionCalculator()
-        
-        # Environment state tracking - CONSERVATIVE SIZING FOR TESTING
-        self.shares_to_hedge = 1000   # Reduced from 10000 to avoid margin issues
+          # Environment state tracking - INCREASED SIZING FOR ACTUAL TRADING
+        self.shares_to_hedge = 5000   # Increased from 1000 for more realistic hedging
         self.current_call_contracts = 0
         self.current_put_contracts = 0
-        self.max_contracts_per_type = 20   # Reduced from 200
-        self.max_trade_per_step = 3        # Reduced from 15
+        self.max_contracts_per_type = 50   # Increased from 20 for more trading capacity
+        self.max_trade_per_step = 10       # Increased from 3 for more aggressive trading
         self.option_multiplier = 100
         self.transaction_cost_per_contract = 0.05
         
@@ -135,15 +134,20 @@ class RLHedgingAlgorithm(QCAlgorithm):
         if atm_options:
             # Use average implied volatility of ATM options
             valid_ivs = [opt.ImpliedVolatility for opt in atm_options if opt.ImpliedVolatility > 0]
-            if valid_ivs:
+            if valid_ivs:                
                 avg_iv = np.mean(valid_ivs)
                 self.vol_history.append(avg_iv)
                 self.last_vol = avg_iv
-      def Rebalance(self):
+
+    def Rebalance(self):
         """Main rebalancing logic using RL model predictions"""
         # Don't trade during warmup
         if self.IsWarmingUp:
             return
+            
+        # Reset LSTM hidden states at start of new trading day
+        if self.Time.hour == 9 and self.Time.minute == 30:  # Market open
+            self.model_wrapper.reset_hidden_states()
             
         # Check if we have valid price data
         if self.last_price is None:
@@ -174,78 +178,110 @@ class RLHedgingAlgorithm(QCAlgorithm):
             self.Log("Model prediction failed, using fallback action")
             # Simple fallback: no action
             actions = np.array([0.0, 0.0])
-            
-        self.Log(f"Model predicted actions: call={actions[0]:.3f}, put={actions[1]:.3f}")
+            self.Log(f"Model predicted actions: call={actions[0]:.3f}, put={actions[1]:.3f}")
             
         # Execute trades based on RL actions
         self.ExecuteOptionTrades(actions)
-      def GetObservation(self) -> np.ndarray:
-        """Create observation vector matching training environment"""
+    
+    def GetObservation(self) -> np.ndarray:
+        """Create observation vector EXACTLY matching training environment format"""
         if self.last_price is None or self.last_vol is None:
             self.Log("Missing price or volatility data for observation")
             return None
             
-        if len(self.price_history) < 2 or len(self.vol_history) < 2:
-            self.Log(f"Insufficient history: prices={len(self.price_history)}, vol={len(self.vol_history)}")
+        if len(self.price_history) < 2:
+            self.Log(f"Insufficient price history: {len(self.price_history)}")
             return None
         
-        # Calculate features similar to training environment
-        current_price = self.last_price
-        current_vol = self.last_vol
+        # Match training environment exactly
+        S_t = self.last_price
+        v_t = self.last_vol
         
-        # Price momentum features
-        price_return_1 = (self.price_history[-1] / self.price_history[-2] - 1) if len(self.price_history) >= 2 else 0
-        price_return_5 = (self.price_history[-1] / self.price_history[-5] - 1) if len(self.price_history) >= 5 else 0
+        # Get current option prices from available options (approximation)
+        C_t = 0.0
+        P_t = 0.0
+        if self.available_options:
+            # Use first available call/put as proxy for ATM prices
+            for symbol, contract in self.available_options.items():
+                if symbol.ID.OptionRight == OptionRight.Call and C_t == 0.0:
+                    C_t = contract.LastPrice if contract.LastPrice > 0 else contract.AskPrice
+                elif symbol.ID.OptionRight == OptionRight.Put and P_t == 0.0:
+                    P_t = contract.LastPrice if contract.LastPrice > 0 else contract.AskPrice
         
-        # Volatility features  
-        vol_change = (self.vol_history[-1] / self.vol_history[-2] - 1) if len(self.vol_history) >= 2 else 0
+        # Use fallback Black-Scholes if no market prices
+        if C_t <= 0 or P_t <= 0:
+            time_to_expiry = 30/252  # 30 days
+            call_greeks = self.option_calculator.calculate_greeks(S_t, S_t, time_to_expiry, 0.04, v_t, 'call')
+            put_greeks = self.option_calculator.calculate_greeks(S_t, S_t, time_to_expiry, 0.04, v_t, 'put')
+            if C_t <= 0:
+                C_t = call_greeks.get('price', S_t * 0.05)  # fallback 5% of stock price
+            if P_t <= 0:
+                P_t = put_greeks.get('price', S_t * 0.05)
         
-        # Portfolio features
-        call_position_normalized = self.current_call_contracts / self.max_contracts_per_type
-        put_position_normalized = self.current_put_contracts / self.max_contracts_per_type
+        # EXACTLY match training environment normalization
+        s0_safe_obs = max(self.price_history[0] if self.price_history else S_t, 25.0)  # Use first price as S0
+        norm_S_t = S_t / s0_safe_obs
+        norm_C_t = C_t / s0_safe_obs  
+        norm_P_t = P_t / s0_safe_obs
         
-        # Option pricing features (simplified)
-        time_to_expiry = 30/252  # Assume 30 days
-        moneyness_call = current_price / current_price  # ATM = 1.0
-        moneyness_put = current_price / current_price   # ATM = 1.0
+        # Position normalization (same as training)
+        norm_call_held = self.current_call_contracts / self.max_contracts_per_type
+        norm_put_held = self.current_put_contracts / self.max_contracts_per_type
         
-        # Calculate Greeks for calls and puts
-        call_greeks = self.option_calculator.calculate_greeks(
-            current_price, current_price, time_to_expiry, 0.04, current_vol, 'call'
-        )
-        put_greeks = self.option_calculator.calculate_greeks(
-            current_price, current_price, time_to_expiry, 0.04, current_vol, 'put'
-        )
+        # Time feature (approximate episode progress)
+        # Assume daily rebalancing over ~30 day "episode"
+        trading_hours_elapsed = (self.Time.hour - 9) + (self.Time.minute / 60.0)  # Hours since 9 AM
+        days_elapsed = trading_hours_elapsed / 6.5  # 6.5 hour trading day
+        norm_time_to_end = max(0.0, 1.0 - (days_elapsed / 30.0))  # 30-day episode approximation
+        
+        # Calculate Greeks for ATM options (same as training)
+        K_atm_t = round(S_t)  # Round to nearest dollar
+        call_greeks = self.option_calculator.calculate_greeks(S_t, K_atm_t, 30/252, 0.04, v_t, 'call')
+        put_greeks = self.option_calculator.calculate_greeks(S_t, K_atm_t, 30/252, 0.04, v_t, 'put')
         
         call_delta = call_greeks['delta']
-        put_delta = put_greeks['delta'] 
-        gamma = call_greeks['gamma']  # Same for calls and puts
+        call_gamma = call_greeks['gamma']
+        put_delta = put_greeks['delta']
+        put_gamma = call_gamma  # Same for calls and puts at same strike
         
-        # Portfolio Greeks
-        portfolio_delta = (call_delta * self.current_call_contracts + 
-                          put_delta * self.current_put_contracts) * self.option_multiplier
-        portfolio_gamma = gamma * (self.current_call_contracts + self.current_put_contracts) * self.option_multiplier
+        # Single-step returns (same as training)
+        if len(self.price_history) >= 2:
+            lagged_S_return = (S_t - self.price_history[-1]) / self.price_history[-1]
+        else:
+            lagged_S_return = 0.0
+            
+        # Volatility change (raw difference, same as training)  
+        if len(self.vol_history) >= 2:
+            lagged_v_change = v_t - self.vol_history[-1]
+        else:
+            lagged_v_change = 0.0
         
-        # Create observation vector matching training format
-        observation = np.array([
-            current_price / 400.0,  # Normalized price
-            price_return_1,
-            price_return_5, 
-            vol_change,
-            call_position_normalized,
-            put_position_normalized,
-            moneyness_call,
-            moneyness_put,
-            current_vol,
-            call_delta,
-            put_delta,
-            portfolio_delta / 10000.0,  # Normalized
-            portfolio_gamma / 10000.0   # Normalized
+        # Clip to training environment bounds
+        lagged_S_return = np.clip(lagged_S_return, -1.0, 1.0)
+        lagged_v_change = np.clip(lagged_v_change, -1.0, 1.0)
+        
+        # Create observation EXACTLY matching training format
+        obs = np.array([
+            norm_S_t,           # 0: Normalized stock price
+            norm_C_t,           # 1: Normalized call price  
+            norm_P_t,           # 2: Normalized put price
+            norm_call_held,     # 3: Call position normalized
+            norm_put_held,      # 4: Put position normalized
+            v_t,                # 5: Volatility (raw)
+            norm_time_to_end,   # 6: Time remaining
+            call_delta,         # 7: Call delta
+            call_gamma,         # 8: Call gamma 
+            put_delta,          # 9: Put delta
+            put_gamma,          # 10: Put gamma
+            lagged_S_return,    # 11: Stock return
+            lagged_v_change     # 12: Vol change
         ], dtype=np.float32)
         
-        self.Log(f"Created observation: price={current_price:.2f}, vol={current_vol:.3f}, call_pos={call_position_normalized:.3f}, put_pos={put_position_normalized:.3f}")
+        self.Log(f"Training-format observation: S={norm_S_t:.3f}, C={norm_C_t:.3f}, P={norm_P_t:.3f}, call_pos={norm_call_held:.3f}, put_pos={norm_put_held:.3f}")
         
-        return observation    def ExecuteOptionTrades(self, actions: np.ndarray):
+        return obs
+    
+    def ExecuteOptionTrades(self, actions: np.ndarray):
         """Execute option trades based on RL model actions"""
         if len(actions) != 2:
             self.Log(f"Invalid action length: {len(actions)}")

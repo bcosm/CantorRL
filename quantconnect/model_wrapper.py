@@ -65,22 +65,6 @@ class ModelWrapper:
         except Exception as e:
             self.algorithm.Log(f"Error loading model: {str(e)}")
             self.loaded = False
-            self._load_sb3_weights(policy_weights)
-            
-            # Set normalization parameters
-            self.obs_mean = norm_stats['obs_mean']
-            self.obs_var = norm_stats['obs_var']
-            
-            # Initialize hidden states for recurrent model
-            hidden_dim = arch_info['hidden_dim']
-            self.hidden_states = (torch.zeros(1, 1, hidden_dim), torch.zeros(1, 1, hidden_dim))
-            
-            self.loaded = True
-            self.algorithm.Log("RL Model loaded successfully from ObjectStore")
-            
-        except Exception as e:
-            self.algorithm.Log(f"Error loading model: {str(e)}")
-            self.loaded = False
     
     def _load_sb3_weights(self, state_dict):
         """Load SB3 RecurrentPPO weights into our custom model"""
@@ -88,7 +72,7 @@ class ModelWrapper:
             # Map SB3 state dict to our model
             our_state_dict = {}
             
-            # LSTM weights
+            # LSTM weights (actor only for inference)
             our_state_dict['lstm_actor.weight_ih_l0'] = state_dict['lstm_actor.weight_ih_l0']
             our_state_dict['lstm_actor.weight_hh_l0'] = state_dict['lstm_actor.weight_hh_l0'] 
             our_state_dict['lstm_actor.bias_ih_l0'] = state_dict['lstm_actor.bias_ih_l0']
@@ -120,13 +104,14 @@ class ModelWrapper:
     def predict(self, observation: np.ndarray) -> Optional[np.ndarray]:
         """Make prediction using the loaded model"""
         if not self.loaded or self.model is None:
+            self.algorithm.Log("Model not loaded, cannot make prediction")
             return None
             
         try:
             # Normalize observation using saved statistics
             normalized_obs = (observation - self.obs_mean) / np.sqrt(self.obs_var + 1e-8)
             
-            # Convert to tensor
+            # Convert to tensor with proper shape for LSTM: (batch_size, seq_len, features)
             obs_tensor = torch.FloatTensor(normalized_obs).unsqueeze(0).unsqueeze(0)
             
             # Get prediction from model
@@ -137,11 +122,19 @@ class ModelWrapper:
             # Clip actions to [-1, 1] range
             action = np.clip(action, -1, 1)
             
+            self.algorithm.Log(f"Model prediction: {action}")
             return action
             
         except Exception as e:
             self.algorithm.Log(f"Error in model prediction: {str(e)}")
             return None
+    
+    def reset_hidden_states(self):
+        """Reset LSTM hidden states (call at start of new episode/day)"""
+        if self.loaded and self.model is not None:
+            hidden_dim = 128  # Default LSTM hidden size
+            self.hidden_states = (torch.zeros(1, 1, hidden_dim), torch.zeros(1, 1, hidden_dim))
+            self.algorithm.Log("Reset LSTM hidden states")
 
 
 class RecurrentPPOModel(torch.nn.Module):
@@ -180,102 +173,5 @@ class RecurrentPPOModel(torch.nn.Module):
         
         # Apply tanh to get actions in [-1, 1] range
         actions = torch.tanh(action_means)
-        
-        return actions, new_hidden_states
-            # model_bytes = self.algorithm.ObjectStore.ReadBytes("final_model.zip")
-            # vecnorm_bytes = self.algorithm.ObjectStore.ReadBytes("final_vecnormalize.pkl")
-        
-            self.algorithm.Log("Model loading simulated - replace with actual ObjectStore loading")
-            
-            # Placeholder for model structure - you'll need to adapt this based on your actual model
-            # This is a simplified neural network that mimics the RecurrentPPO structure
-            self.model = SimpleRLModel()
-            
-            # Initialize hidden states for recurrent model
-            self.hidden_states = (torch.zeros(1, 1, 64), torch.zeros(1, 1, 64))
-            
-            # Placeholder normalization stats
-            self.obs_mean = np.zeros(13)
-            self.obs_var = np.ones(13)
-            
-            self.loaded = True
-            self.algorithm.Log("RL Model loaded successfully (simulated)")
-            
-        except Exception as e:
-            self.algorithm.Log(f"Error loading model: {str(e)}")
-            self.loaded = False
-    
-    def predict(self, observation: np.ndarray) -> Optional[np.ndarray]:
-        """Make prediction using the loaded model"""
-        if not self.loaded or self.model is None:
-            return None
-            
-        try:
-            # Normalize observation (simulate VecNormalize)
-            normalized_obs = (observation - self.obs_mean) / np.sqrt(self.obs_var + 1e-8)
-            
-            # Convert to tensor
-            obs_tensor = torch.FloatTensor(normalized_obs).unsqueeze(0).unsqueeze(0)
-            
-            # Get prediction from model
-            with torch.no_grad():
-                action, self.hidden_states = self.model(obs_tensor, self.hidden_states)
-                action = action.squeeze().numpy()
-            
-            # Clip actions to [-1, 1] range
-            action = np.clip(action, -1, 1)
-            
-            return action
-            
-        except Exception as e:
-            self.algorithm.Log(f"Error in model prediction: {str(e)}")
-            return None
-
-
-class SimpleRLModel(torch.nn.Module):
-    """Simplified neural network to simulate the RecurrentPPO model"""
-    
-    def __init__(self, obs_dim=13, action_dim=2, hidden_dim=64):
-        super().__init__()
-        
-        # Feature extraction layers
-        self.feature_extractor = torch.nn.Sequential(
-            torch.nn.Linear(obs_dim, hidden_dim),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_dim, hidden_dim),
-            torch.nn.ReLU()
-        )
-        
-        # LSTM layer for recurrent processing
-        self.lstm = torch.nn.LSTM(hidden_dim, hidden_dim, batch_first=True)
-        
-        # Policy head
-        self.policy_head = torch.nn.Sequential(
-            torch.nn.Linear(hidden_dim, hidden_dim),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_dim, action_dim),
-            torch.nn.Tanh()  # Output in [-1, 1] range
-        )
-        
-        # Initialize with small random weights
-        self._initialize_weights()
-    
-    def _initialize_weights(self):
-        """Initialize network weights"""
-        for module in self.modules():
-            if isinstance(module, torch.nn.Linear):
-                torch.nn.init.orthogonal_(module.weight, gain=0.01)
-                torch.nn.init.constant_(module.bias, 0)
-    
-    def forward(self, obs, hidden_states):
-        """Forward pass through the network"""
-        # Extract features
-        features = self.feature_extractor(obs)
-        
-        # LSTM processing
-        lstm_out, new_hidden_states = self.lstm(features, hidden_states)
-        
-        # Get actions
-        actions = self.policy_head(lstm_out)
         
         return actions, new_hidden_states
