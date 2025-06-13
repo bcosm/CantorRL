@@ -15,10 +15,13 @@ class ModelWrapper:
         self.device = torch.device('cpu')  # Use CPU for QuantConnect
         self.hidden_states = None
         self.loaded = False
-        
-        # Normalization parameters
+          # Normalization parameters
         self.obs_mean = None
         self.obs_var = None
+        
+        # Debug counters
+        self.prediction_count = 0
+        self.logged_normalization = False
         
         # Load model from ObjectStore
         self.LoadModel()
@@ -49,24 +52,29 @@ class ModelWrapper:
             )
             
             # Load the trained weights with custom mapping
-            self._load_sb3_weights(policy_weights)
+            self.LoadSB3Weights(policy_weights)
             
-            # Set normalization parameters
+            # Load normalization statistics (FIXED: use correct keys)
             self.obs_mean = norm_stats['obs_mean']
             self.obs_var = norm_stats['obs_var']
             
-            # Initialize hidden states for recurrent model
-            hidden_dim = arch_info['hidden_dim']
-            self.hidden_states = (torch.zeros(1, 1, hidden_dim), torch.zeros(1, 1, hidden_dim))
+            # Set model to evaluation mode
+            self.model.eval()
+            
+            # Initialize hidden states
+            self.reset_hidden_states()
             
             self.loaded = True
-            self.algorithm.Log("RL Model loaded successfully from ObjectStore")
+            self.algorithm.Log(f"Model loaded successfully. Obs dim: {arch_info['observation_dim']}, Action dim: {arch_info['action_dim']}")
+            self.algorithm.Log(f"Normalization - Mean shape: {self.obs_mean.shape}, Var shape: {self.obs_var.shape}")
+            self.algorithm.Log(f"Mean range: [{np.min(self.obs_mean):.4f}, {np.max(self.obs_mean):.4f}]")
+            self.algorithm.Log(f"Var range: [{np.min(self.obs_var):.4f}, {np.max(self.obs_var):.4f}]")
             
         except Exception as e:
-            self.algorithm.Log(f"Error loading model: {str(e)}")
+            self.algorithm.Log(f"Failed to load model: {str(e)}")
             self.loaded = False
     
-    def _load_sb3_weights(self, state_dict):
+    def LoadSB3Weights(self, state_dict):
         """Load SB3 RecurrentPPO weights into our custom model"""
         try:
             # Map SB3 state dict to our model
