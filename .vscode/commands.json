@@ -1,0 +1,45 @@
+{
+    "commands": [
+        {
+            "command": "quantconnect.backtest",
+            "title": "QC: Run Backtest",
+            "category": "QuantConnect"
+        },
+        {
+            "command": "quantconnect.cloudBacktest",
+            "title": "QC: Run Cloud Backtest",
+            "category": "QuantConnect"
+        },
+        {
+            "command": "quantconnect.research",
+            "title": "QC: Start Research",
+            "category": "QuantConnect"
+        },
+        {
+            "command": "quantconnect.viewResults",
+            "title": "QC: View Results",
+            "category": "QuantConnect"
+        }
+    ],
+    "keybindings": [
+        {
+            "command": "workbench.action.tasks.runTask",
+            "key": "ctrl+shift+b",
+            "args": "LEAN: Backtest Algorithm"
+        },
+        {
+            "command": "workbench.action.tasks.runTask",
+            "key": "ctrl+shift+alt+b",
+            "args": "LEAN: Cloud Backtest"
+        }
+    ],
+    "menus": {
+        "explorer/context": [
+            {
+                "command": "quantconnect.backtest",
+                "when": "resourceExtname == .py && resourcePath =~ /quantconnect/",
+                "group": "quantconnect"
+            }
+        ]
+    }
+}

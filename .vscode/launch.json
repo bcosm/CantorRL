@@ -1,0 +1,65 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug QuantConnect Algorithm",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/quantconnect/main.py",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/quantconnect",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/quantconnect"
+            },
+            "args": [],
+            "justMyCode": false
+        },
+        {
+            "name": "Debug Model Wrapper",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/quantconnect/model_wrapper.py",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/quantconnect",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/quantconnect"
+            },
+            "args": [],
+            "justMyCode": false
+        },
+        {
+            "name": "LEAN Backtest",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "lean",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "args": [
+                "backtest",
+                "QuantConnect",
+                "--verbose"
+            ],
+            "justMyCode": false
+        },
+        {
+            "name": "QuantConnect Cloud Backtest",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "lean",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "args": [
+                "cloud",
+                "backtest",
+                "QuantConnect",
+                "--push",
+                "--verbose"
+            ],
+            "justMyCode": false
+        }
+    ]
+}

@@ -108,22 +108,39 @@ class ModelWrapper:
         except Exception as e:
             self.algorithm.Log(f"Error mapping SB3 weights: {str(e)}")
             raise
-    
     def predict(self, observation: np.ndarray) -> Optional[np.ndarray]:
-        """Make prediction using the loaded model"""
+        """Make prediction using the loaded model - FIXED CRITICAL ISSUE"""
         if not self.loaded or self.model is None:
             self.algorithm.Log("Model not loaded, cannot make prediction")
             return None
             
         try:
+            # Log first few predictions for debugging
+            self.prediction_count += 1
+            if self.prediction_count <= 5:
+                self.algorithm.Log(f"=== PREDICTION #{self.prediction_count} ===")
+                self.algorithm.Log(f"Input observation shape: {observation.shape}")
+                self.algorithm.Log(f"Obs mean shape: {self.obs_mean.shape if self.obs_mean is not None else 'None'}")
+                self.algorithm.Log(f"Obs var shape: {self.obs_var.shape if self.obs_var is not None else 'None'}")
+            
             # Normalize observation using saved statistics
+            if self.obs_mean is None or self.obs_var is None:
+                self.algorithm.Log("ERROR: Normalization statistics not loaded!")
+                return None
+                
             normalized_obs = (observation - self.obs_mean) / np.sqrt(self.obs_var + 1e-8)
+            
+            if self.prediction_count <= 5:
+                self.algorithm.Log(f"Normalized obs first 6 values: {normalized_obs[:6]}")
             
             # Convert to tensor with proper shape for LSTM: (batch_size, seq_len, features)
             obs_tensor = torch.FloatTensor(normalized_obs).unsqueeze(0).unsqueeze(0)
             
             # Get prediction from model
             with torch.no_grad():
+                if self.hidden_states is None:
+                    self.reset_hidden_states()
+                    
                 action, self.hidden_states = self.model(obs_tensor, self.hidden_states)
                 action = action.squeeze().numpy()
             
@@ -135,6 +152,8 @@ class ModelWrapper:
             
         except Exception as e:
             self.algorithm.Log(f"Error in model prediction: {str(e)}")
+            import traceback
+            self.algorithm.Log(f"Traceback: {traceback.format_exc()}")
             return None
     
     def reset_hidden_states(self):

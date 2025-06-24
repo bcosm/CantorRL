@@ -1,0 +1,32 @@
+{
+    "algorithm-type-name": "RLHedgingAlgorithm",
+    "algorithm-language": "Python",
+    "algorithm-location": "quantconnect/main.py",
+    "data-folder": "./data",
+    "debugging": true,
+    "debugging-method": "LocalCmdline",
+    "log-handler": "ConsoleLogHandler",
+    "messaging-handler": "StreamingMessageHandler",
+    "job-queue-handler": "JobQueue",
+    "api-handler": "LocalDiskApiHandler",
+    "map-file-provider": "LocalDiskMapFileProvider",
+    "factor-file-provider": "LocalDiskFactorFileProvider",
+    "data-provider": "DefaultDataProvider",
+    "alpha-handler": "DefaultAlphaHandler",
+    "object-store": "LocalObjectStore",
+    "data-channel-provider": "DataChannelProvider",
+    "parameters": {
+        "environment": "backtesting"
+    },
+    "environments": {
+        "backtesting": {
+            "live-mode": false,
+            "setup-handler": "ConsoleSetupHandler",
+            "result-handler": "BacktestingResultHandler",
+            "data-feed-handler": "FileSystemDataFeed",
+            "real-time-handler": "BacktestingRealTimeHandler",
+            "history-provider": "SubscriptionDataReaderHistoryProvider",
+            "transaction-handler": "BacktestingTransactionHandler"
+        }
+    }
+}

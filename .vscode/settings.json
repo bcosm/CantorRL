@@ -1,0 +1,25 @@
+{
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+    "python.terminal.activateEnvironment": true,
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}",
+        "${workspaceFolder}/quantconnect",
+        "${workspaceFolder}/src"
+    ],
+    "files.associations": {
+        "*.py": "python"
+    },
+    "editor.formatOnSave": true,
+    "python.formatting.provider": "black",
+    "python.linting.enabled": true,
+    "python.linting.pylintEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    "python.testing.pytestArgs": [
+        "."
+    ],
+    "terminal.integrated.defaultProfile.windows": "PowerShell",
+    "quantconnect.api.token": "",
+    "quantconnect.api.userId": "",
+    "quantconnect.organization": ""
+}
